@@ -6,8 +6,8 @@ Adds a new head for predicting which slots the user is asking about
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from disan import DiSAN
-from context_fusion_modified import ContextFusion
+from models.disan import DiSAN
+from models.context_fusion_modified import ContextFusion
 
 
 class CASA_NLU_Standalone(nn.Module):
