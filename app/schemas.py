@@ -1,0 +1,115 @@
+"""
+Pydantic schemas and domain definitions
+"""
+from typing import Dict, List, Optional
+from pydantic import BaseModel, Field
+
+
+# ============================================================================
+# API Request/Response Models
+# ============================================================================
+
+class ChatMessage(BaseModel):
+    """User message"""
+    message: str = Field(..., min_length=1, max_length=500)
+    session_id: Optional[str] = None
+
+
+class SlotValue(BaseModel):
+    """Slot-value pair"""
+    slot: str
+    value: str
+
+
+class ChatResponse(BaseModel):
+    """Bot response"""
+    session_id: str
+    intent: str
+    slots: List[SlotValue]
+    requested_slots: List[str]
+    response: Optional[str] = None  # Only for supported domains
+    domain: str
+    confidence: float
+
+
+class SessionInfo(BaseModel):
+    """Session information"""
+    session_id: str
+    turn_count: int
+    current_state: Dict[str, List[str]]
+    last_intent: str
+
+
+# ============================================================================
+# Domain Schemas
+# ============================================================================
+
+DOMAIN_SCHEMAS = {
+    "Buses_2": {
+        "service_name": "Buses_2",
+        "description": "Find a bus to take you to the city you want",
+        "slots": {
+            "origin": "Origin city for journey",
+            "destination": "Destination city for journey",
+            "origin_station_name": "Name of the bus terminus at the origin",
+            "destination_station_name": "Name of the bus terminus at the destination",
+            "departure_date": "Date of bus departure",
+            "price": "Price per ticket of the itinerary",
+            "departure_time": "Time of bus departure",
+            "group_size": "Size of group for the booking",
+            "fare_type": "Type of fare for the booking"
+        },
+        "intents": {
+            "FindBus": {
+                "description": "Find a bus itinerary between cities for a given date",
+                "required_slots": ["origin", "destination", "departure_date"],
+                "optional_slots": ["fare_type", "group_size"]
+            },
+            "BuyBusTicket": {
+                "description": "Buy tickets for a bus itinerary",
+                "required_slots": ["origin", "destination", "departure_date", "departure_time", "group_size"],
+                "optional_slots": ["fare_type"]
+            }
+        }
+    },
+    "Movies_1": {
+        "service_name": "Movies_1",
+        "description": "A go-to provider for finding movies, searching for show times and booking tickets",
+        "slots": {
+            "price": "Price per ticket",
+            "number_of_tickets": "Number of the movie tickets to be purchased",
+            "show_type": "Type of show",
+            "theater_name": "Name of the theatre",
+            "show_time": "Time of the show",
+            "show_date": "Date of the show",
+            "genre": "Genre of the movie",
+            "street_address": "Address of the theatre",
+            "location": "City where the theatre is located",
+            "movie_name": "Name of the movie"
+        },
+        "intents": {
+            "BuyMovieTickets": {
+                "description": "Buy movie tickets for a particular show",
+                "required_slots": ["movie_name", "number_of_tickets", "show_date", "location", "show_time", "show_type"]
+            },
+            "FindMovies": {
+                "description": "Search for movies by location, genre or other attributes",
+                "required_slots": ["location"],
+                "optional_slots": ["genre", "show_type", "theater_name"]
+            },
+            "GetTimesForMovie": {
+                "description": "Get show times for a movie at a location on a given date",
+                "required_slots": ["movie_name", "location", "show_date"],
+                "optional_slots": ["show_type", "theater_name"]
+            }
+        }
+    }
+}
+
+
+def get_domain_from_intent(intent: str) -> Optional[str]:
+    """Extract domain from intent name (e.g., 'Buses_2_FindBus' -> 'Buses_2')"""
+    for domain in DOMAIN_SCHEMAS.keys():
+        if intent.startswith(domain):
+            return domain
+    return None
