@@ -143,17 +143,23 @@ def enhanced_slot_value_extraction(
             # Save previous slot
             if current_slot and current_value_tokens:
                 if use_utterance_fallback and current_char_spans:
-                    # Extract from original utterance for better quality
-                    start = min(s for s, e in current_char_spans if s is not None)
-                    end = max(e for s, e in current_char_spans if e is not None)
-                    value = utterance_text[start:end].strip()
+                    # FIXED: Check if there are valid spans before using min/max
+                    valid_spans = [(s, e) for s, e in current_char_spans if s is not None and e is not None]
+                    if valid_spans:
+                        start = min(s for s, e in valid_spans)
+                        end = max(e for s, e in valid_spans)
+                        value = utterance_text[start:end].strip()
+                    else:
+                        # Fallback to token concatenation
+                        value = ' '.join(current_value_tokens).replace(' ##', '')
                 else:
                     # Fallback to token concatenation
                     value = ' '.join(current_value_tokens).replace(' ##', '')
                 
                 if current_slot not in slot_values:
                     slot_values[current_slot] = []
-                slot_values[current_slot].append(value)
+                if value:  # Only add non-empty values
+                    slot_values[current_slot].append(value)
             
             current_slot = None
             current_value_tokens = []
@@ -163,15 +169,20 @@ def enhanced_slot_value_extraction(
             # Save previous and start new
             if current_slot and current_value_tokens:
                 if use_utterance_fallback and current_char_spans:
-                    start = min(s for s, e in current_char_spans if s is not None)
-                    end = max(e for s, e in current_char_spans if e is not None)
-                    value = utterance_text[start:end].strip()
+                    valid_spans = [(s, e) for s, e in current_char_spans if s is not None and e is not None]
+                    if valid_spans:
+                        start = min(s for s, e in valid_spans)
+                        end = max(e for s, e in valid_spans)
+                        value = utterance_text[start:end].strip()
+                    else:
+                        value = ' '.join(current_value_tokens).replace(' ##', '')
                 else:
                     value = ' '.join(current_value_tokens).replace(' ##', '')
                 
                 if current_slot not in slot_values:
                     slot_values[current_slot] = []
-                slot_values[current_slot].append(value)
+                if value:  # Only add non-empty values
+                    slot_values[current_slot].append(value)
             
             current_slot = slot_tag[2:]
             current_value_tokens = [token]
@@ -185,7 +196,7 @@ def enhanced_slot_value_extraction(
     # Save final slot
     if current_slot and current_value_tokens:
         if use_utterance_fallback and current_char_spans:
-            valid_spans = [(s, e) for s, e in current_char_spans if s is not None]
+            valid_spans = [(s, e) for s, e in current_char_spans if s is not None and e is not None]
             if valid_spans:
                 start = min(s for s, e in valid_spans)
                 end = max(e for s, e in valid_spans)
@@ -197,7 +208,8 @@ def enhanced_slot_value_extraction(
         
         if current_slot not in slot_values:
             slot_values[current_slot] = []
-        slot_values[current_slot].append(value)
+        if value:  # Only add non-empty values
+            slot_values[current_slot].append(value)
     
     return slot_values
 
