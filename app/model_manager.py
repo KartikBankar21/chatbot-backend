@@ -1,5 +1,5 @@
 """
-Model loading and inference management
+Model loading and inference management - ROBUST VERSION
 """
 import torch
 import pickle
@@ -33,7 +33,7 @@ class ModelManager:
         self.loaded = False
     
     def load_model(self, checkpoint_path: Path, mappings_path: Path):
-        """Load model and mappings"""
+        """Load model and mappings with robust checkpoint format detection"""
         print(f"🔄 Loading model from {checkpoint_path}...")
         
         # Load tokenizer
@@ -52,14 +52,83 @@ class ModelManager:
         # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
-        # Create model
+        # ============================================================
+        # DETECT CHECKPOINT FORMAT AND EXTRACT STATE DICT
+        # ============================================================
+        print(f"🔍 Detecting checkpoint format...")
+        
+        state_dict = None
+        req_slot2id = None
+        req_id2slot = None
+        num_requestable_slots = None
+        
+        if isinstance(checkpoint, dict):
+            print(f"   Checkpoint is a dictionary with keys: {list(checkpoint.keys())[:5]}...")
+            
+            # Format 1: Dictionary with 'model_state_dict' key
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+                req_slot2id = checkpoint.get('req_slot2id')
+                req_id2slot = checkpoint.get('req_id2slot')
+                num_requestable_slots = checkpoint.get('num_requestable_slots')
+                print("✅ Format: Dictionary with 'model_state_dict' key")
+            
+            # Format 2: Dictionary with 'model' key
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
+                req_slot2id = checkpoint.get('req_slot2id')
+                req_id2slot = checkpoint.get('req_id2slot')
+                num_requestable_slots = checkpoint.get('num_requestable_slots')
+                print("✅ Format: Dictionary with 'model' key")
+            
+            # Format 3: Direct state_dict (YOUR FORMAT)
+            # Check if keys look like model parameters (e.g., 'model.embedding.weight')
+            elif any(isinstance(v, torch.Tensor) for v in checkpoint.values()):
+                state_dict = checkpoint
+                print("✅ Format: Direct state_dict (saved with model.state_dict())")
+            
+            else:
+                raise ValueError(f"Unknown checkpoint format. Keys: {checkpoint.keys()}")
+        
+        else:
+            # Format 4: Entire model object (rare)
+            raise ValueError(f"Checkpoint is not a dictionary, type: {type(checkpoint)}")
+        
+        if state_dict is None:
+            raise ValueError("Could not extract state_dict from checkpoint")
+        
+        print(f"   State dict has {len(state_dict)} parameters")
+        
+        # ============================================================
+        # CREATE MODEL ARCHITECTURE
+        # ============================================================
         from app.schemas import DOMAIN_SCHEMAS
+        
+        # Determine num_requestable_slots
+        if num_requestable_slots is None:
+            if req_slot2id:
+                num_requestable_slots = len(req_slot2id)
+            else:
+                # Count from schemas
+                all_slots = set()
+                for domain_schema in DOMAIN_SCHEMAS.values():
+                    all_slots.update(domain_schema['slots'].keys())
+                num_requestable_slots = len(all_slots)
+                print(f"⚠️  No num_requestable_slots found, inferred {num_requestable_slots} from schemas")
+        
+        print(f"📊 Model configuration:")
+        print(f"   - Vocab: {len(self.mappings['vocab'])}")
+        print(f"   - Intents: {len(self.mappings['intent2id'])}")
+        print(f"   - Slots: {len(self.mappings['slot2id'])}")
+        print(f"   - Dialog Acts: {len(self.mappings['da2id'])}")
+        print(f"   - Requestable Slots: {num_requestable_slots}")
+        
         casa_core = CASA_NLU_Standalone(
             vocab_size=len(self.mappings['vocab']),
             intent_size=len(self.mappings['intent2id']),
             slot_size=len(self.mappings['slot2id']),
             da_size=len(self.mappings['da2id']),
-            num_requestable_slots=checkpoint.get('num_requestable_slots', 50),
+            num_requestable_slots=num_requestable_slots,
             hidden_dim=config.HIDDEN_DIM,
             embed_dim=config.EMBED_DIM,
             intent_embed_dim=16,
@@ -71,28 +140,50 @@ class ModelManager:
         )
         
         self.model = CASATrainerWrapperStandalone(casa_core)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # ============================================================
+        # LOAD STATE DICT WITH FALLBACK
+        # ============================================================
+        try:
+            self.model.load_state_dict(state_dict, strict=True)
+            print("✅ Loaded state dict (strict mode)")
+        except RuntimeError as e:
+            print(f"⚠️  Strict loading failed: {str(e)[:200]}")
+            print("🔄 Trying non-strict loading...")
+            missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+            if missing:
+                print(f"⚠️  Missing keys: {missing[:5]}")
+            if unexpected:
+                print(f"⚠️  Unexpected keys: {unexpected[:5]}")
+            print("✅ Loaded state dict (non-strict mode)")
+        
         self.model.to(self.device)
         self.model.eval()
         
-        # Load requested slot mappings
-        if 'req_slot2id' in checkpoint:
+        # ============================================================
+        # SETUP REQUESTED SLOT MAPPINGS
+        # ============================================================
+        if req_slot2id and req_id2slot:
             self.req_mappings = {
-                'req_slot2id': checkpoint['req_slot2id'],
-                'req_id2slot': checkpoint['req_id2slot'],
-                'num_req_slots': checkpoint['num_requestable_slots']
+                'req_slot2id': req_slot2id,
+                'req_id2slot': req_id2slot,
+                'num_req_slots': num_requestable_slots
             }
+            print("✅ Loaded req_slot mappings from checkpoint")
         else:
             # Fallback: create from schemas
+            print("⚠️  Creating req_slot mappings from schemas...")
             req_slot2id, req_id2slot, num_req_slots = create_requested_slot_mapping(DOMAIN_SCHEMAS)
             self.req_mappings = {
                 'req_slot2id': req_slot2id,
                 'req_id2slot': req_id2slot,
                 'num_req_slots': num_req_slots
             }
+            print(f"✅ Created {num_req_slots} req_slot mappings")
         
         self.loaded = True
         print(f"✅ Model loaded successfully on {self.device}")
+        print("="*80)
     
     def tokenize_and_encode(self, utterance: str) -> Tuple[List[str], List[int]]:
         """Tokenize utterance and convert to IDs"""
